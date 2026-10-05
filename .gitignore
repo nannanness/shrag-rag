@@ -1,17 +1,17 @@
-# 数据产物不入库（体积大且可由代码重建）
+﻿# 大体积衍生产物不入库（可由 data/pdfs 重建）
 data/parsed/
 data/chunks/
 data/index/
-data/metrics/
+data/table_images/
 
-# 但保留流程记录（很小，是"做过什么"的证据）
-# data/meta/ 不要忽略：parse_manifest.csv / quality_report.csv / metrics_preview.csv
+# 小而重要的「过程记录 + 结果」入库：
+#   data/meta/     采集元数据、解析清单、质量报告
+#   data/metrics/  结构化指标表（公司 × 指标 × 年份）
 
 logs/
 *.part
 data/_*/
 
-# 一次性探针脚本
 _probe_*.py
 
 __pycache__/
