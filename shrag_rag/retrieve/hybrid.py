@@ -135,11 +135,19 @@ class HybridRetriever:
     # -- 检索主入口 -------------------------------------------------------- #
 
     def retrieve(self, question: str, topk: int = 10,
+                 qvec: np.ndarray | None = None,
                  debug: bool = False) -> tuple[list[Hit], QueryIntent]:
+        """``qvec`` 可传入预先算好的查询向量。
+
+        评估时要跑上千道题，逐题调嵌入接口会慢到不可用
+        （每次一个请求，串行上千次）。调用方可先用 ``embed_texts``
+        批量算好所有问题向量再逐题检索。
+        """
         intent = analyze(question, self.companies)
         cand = self._candidates(intent)
 
-        qv = self.embedder.embed_texts([question])[0]
+        if qvec is None:
+            qvec = self.embedder.embed_texts([question])[0]
         n_cand = self.vs.ntotal if cand is None else len(cand)
         if n_cand == 0:
             log.warning("候选集为空：%s", intent.describe())
@@ -147,7 +155,7 @@ class HybridRetriever:
 
         # 1) 向量检索（预过滤到候选集）
         allowed = None if cand is None else {self.ids[i] for i in cand}
-        vhits = self.vs.search(qv, topk=n_cand, allowed=allowed)
+        vhits = self.vs.search(qvec, topk=n_cand, allowed=allowed)
         vec = {cid: s for cid, s in vhits}
 
         # 2) BM25（全库算分后按候选集筛）

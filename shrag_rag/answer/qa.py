@@ -89,15 +89,36 @@ class RagQA:
 
     # -- 结构化通道 -------------------------------------------------------- #
 
-    def lookup_facts(self, intent: QueryIntent, max_years: int = 3) -> list[dict]:
-        """问数字时，从指标表取出已核实的权威值。
+    def lookup_facts(self, intent: QueryIntent, max_years: int = 3,
+                     min_source: str = "summary") -> list[dict]:
+        """问数字时，从指标表取出**高置信**的权威值。
 
-        这是双通道设计的落点：模型不必从表格文本里"读"数字，直接复述即可。
+        ## 为什么默认只取 ``source == "summary"``
+
+        抽取层有两条来源：
+
+        - ``summary``：从「主要会计数据 / 主要财务指标」标准表抽的。
+          这张表强制标准化披露、行标签全国统一，可靠。
+        - ``statement``：汇总表缺该指标时，从正式报表的行标签兜底抽的。
+          **这条路出过错** —— 实测：
+
+          | 公司 | 指标表的值 | 年报真实值 |
+          | --- | --- | --- |
+          | 中国石化 | -3,280,213 百万元 | ``(1,004,962)`` 百万元 |
+          | 招商银行 | -259 元 | ``(24,689)`` / ``165,173`` 百万元 |
+
+          原因是报表里同一行标签可能出现多次、或首列不是本期数，
+          ``vals[0]`` 就取错了。
+
+        错值被当作「已核实的权威数值」注入 prompt，模型会**自信地说出错数** ——
+        这比检索不到更危险。所以宁可少给，不可给错：
+        低置信值不进结构化通道，交给证据由模型自己读。
         """
         if not (intent.code and intent.metric):
             return []
         facts = [v for (c, m, y), v in self.metrics.items()
-                 if c == intent.code and m == intent.metric]
+                 if c == intent.code and m == intent.metric
+                 and (min_source is None or v.get("source") == min_source)]
         facts.sort(key=lambda f: -f["year"])
         return facts[:max_years]
 

@@ -107,14 +107,18 @@ def main() -> int:
                 "question": TEMPLATES[metric].format(co=r["name"]),
             })
 
+    # 批量预嵌入：逐题调接口会串行上千次请求，慢到不可用
+    print(f"批量嵌入 {len(cases)} 个问题…")
+    qvecs = retr.embedder.embed_texts([c["question"] for c in cases])
+    print(f"  完成（{retr.embedder.total_tokens} tokens）\n")
     print(f"自动生成 {len(cases)} 道题（标准答案取自 metrics_wide.csv）\n")
     print("=" * 96)
 
     n1 = n5 = 0
     fails = []
     by_metric: dict[str, list[int]] = {}
-    for c in cases:
-        hits, intent = retr.retrieve(c["question"], topk=args.topk)
+    for qi, c in enumerate(cases):
+        hits, intent = retr.retrieve(c["question"], topk=args.topk, qvec=qvecs[qi])
         rank = next((i for i, h in enumerate(hits, 1)
                      if contains_value(h.chunk.get("body") or "", c["value"])), None)
         by_metric.setdefault(c["metric"], []).append(1 if rank else 0)
