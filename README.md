@@ -2,23 +2,32 @@
 
 针对 **100 家上交所上市公司 2025 年年度报告**（24224 页）构建的检索增强问答系统。
 
-与 [`shrag`](../shrag) 的分工：
+> **本仓库自包含。** 100 份年报 PDF（356 MB）与采集元数据已随仓库提交，
+> 直接 `clone` 即可复现全部流程，不依赖外部项目。
 
-| 项目 | 职责 |
-| --- | --- |
-| `shrag` | **数据准备**：爬取年报 PDF，产出 `data/meta/annual_reports.csv` |
-| `shrag-rag` | **解析 / 抽取 / 切片 / 索引 / 检索 / 问答** |
+与爬虫项目 [`shrag`](../shrag) 的关系：
+
+| 项目 | 状态 | 职责 |
+| --- | --- | --- |
+| `shrag` | **已冻结**，不再维护 | 数据准备：爬取年报 PDF，产出 `annual_reports.csv` |
+| `shrag-rag` | **唯一在维护的项目** | 解析 / 抽取 / 切片 / 索引 / 检索 / 问答 |
+
+`scripts/01_parse.py` 会**优先读本仓库**的 `data/pdfs/` 与 `data/meta/`；
+仅当本仓库数据缺失时，才回退到 `D:\Project\shrag`，方便两仓库并存时对照排查。
 
 ---
 
 ## 一、快速开始
 
 ```bash
+git clone https://github.com/nannanness/shrag-rag.git
+cd shrag-rag
 pip install -r requirements.txt
 
 # 需要环境变量 MINERU_API_KEY（MinerU 在线 API token，https://mineru.net）
 python scripts/01_parse.py --limit 10      # 试点 10 家
 python scripts/01_parse.py --limit 0       # 全量（已有产物自动跳过）
+python scripts/02_inspect.py               # 验证解析质量并导出人眼比对文件
 ```
 
 ---
@@ -31,18 +40,26 @@ shrag-rag/
 │   └── parse/                       阶段1 解析
 │       ├── schema.py                ParsedDoc / Block 统一数据模型
 │       ├── mineru.py                MinerU 在线 API v4 客户端
-│       └── pdfsplit.py              分片 / 按页偏移合并
+│       ├── pdfsplit.py              分片 / 按页偏移合并
+│       ├── htmltable.py             HTML 表格 → 二维网格
+│       ├── export.py                Markdown / HTML 导出（人眼比对）
+│       └── verify.py                内容驱动的质量验证
 ├── scripts/
-│   └── 01_parse.py                  编排：拆片 → 提交 → 轮询 → 合并 → 落盘
-├── tests/
-│   └── verify_merge.py              验证分片合并的页码偏移正确性
+│   ├── 01_parse.py                  编排：拆片 → 提交 → 轮询 → 合并 → 落盘
+│   └── 02_inspect.py                验证 + 导出
+├── tests/verify_merge.py            分片合并的页码偏移回归测试
+├── diagnostics/                     排查过程留下的一次性脚本（后端对比等）
 ├── data/
-│   ├── parsed/<code>/doc.json       ★ 归一化产物，下游只用这个
-│   ├── parsed/<code>/parts_raw/     MinerU 原始产物
-│   ├── parsed/<code>/parts/         拆出的分片 PDF（可删）
-│   └── meta/parse_manifest.csv      每份的页数/片数/块数/表格数/耗时
+│   ├── pdfs/<code>/*.pdf            ★ 年报原文（100 份 / 356 MB，随仓库提交）
+│   ├── meta/annual_reports.csv      ★ 采集元数据（公司/年份/URL/文件大小）
+│   ├── meta/companies.csv           全部上市公司名录（1604 家）
+│   ├── meta/parse_manifest.csv      每份的页数/片数/块数/表格数/耗时
+│   ├── meta/quality_report.csv      逐份质量验证结果
+│   ├── meta/metrics_preview.csv     抽出的关键指标（阶段2 原型）
+│   └── parsed/<code>/doc.json       ★ 归一化产物，下游只用这个（不入库）
 └── logs/
 ```
+
 
 ---
 
