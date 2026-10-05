@@ -1,4 +1,4 @@
-﻿# 大体积衍生产物不入库（可由 data/pdfs 重建）
+# 大体积衍生产物不入库（可由 data/pdfs 重建）
 data/parsed/
 data/chunks/
 data/index/

@@ -35,7 +35,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from shrag_rag.parse import (KEY_METRICS, ParsedDoc, check_report,  # noqa: E402
+from shrag_rag.parse import (CORE_METRICS, ParsedDoc, check_report,  # noqa: E402
                              extract_metrics, severity_counts)
 from shrag_rag.parse.export import doc_to_html, doc_to_markdown    # noqa: E402
 from shrag_rag.parse.verify import find_suspicious                 # noqa: E402
@@ -79,7 +79,7 @@ def main() -> int:
 
         if rep["ok"]:
             verdict = "PASS"
-        elif rep["n_found"] >= len(KEY_METRICS) - 2:
+        elif rep["n_found"] >= len(CORE_METRICS) - 2:
             verdict = "WARN"
         else:
             verdict = "FAIL"
@@ -89,20 +89,22 @@ def main() -> int:
             "blocks": st["n_blocks"], "tables": st["n_table"], "chars": st["chars"],
             "chars_per_page": round(st["chars"] / max(st["n_pages"], 1)),
             "metrics_found": rep["n_found"], "metrics_total": rep["n_total"],
-            "cross_checked": len(rep["cross"]),
-            "cross_match": sum(1 for c in rep["cross"] if c["match"]),
+            "cross_checked": len(rep["agree"]),
+            "cross_match": sum(1 for c in rep["agree"] if c["consistent"]),
             "high": sc["high"], "mid": sc["mid"], "info": sc["info"],
             "verdict": verdict, "problems": " | ".join(rep["problems"])[:230],
         })
 
         hits = extract_metrics(doc)
-        for name, _ in KEY_METRICS:
+        for name in CORE_METRICS:
             hs = hits[name]
+            # 优先取汇总表（合并口径）的命中，与 check_report 保持一致的取值口径
+            h = next((x for x in hs if x["is_summary"]), hs[0] if hs else None)
             metric_rows.append({
                 "code": doc.code, "name": doc.name, "metric": name,
-                "value": (f"{hs[0].first:,.2f}" if hs and hs[0].first is not None else ""),
-                "page": hs[0].page if hs else "",
-                "label": hs[0].label if hs else "",
+                "value": (f"{h['value']:,.2f}" if h and h["value"] is not None else ""),
+                "page": h["page"] if h else "",
+                "label": h["label"] if h else "",
                 "n_hits": len(hs),
             })
 
@@ -119,12 +121,15 @@ def main() -> int:
                               f"(p{v['page']}, {v['n']} 处命中, 标签「{v['label']}」)")
             else:
                 detail.append(f"    ❌ {name:<14} 未找到")
-        if rep["cross"]:
-            detail.append("  跨表数值比对:")
-            for c in rep["cross"]:
-                detail.append(f"    {'✅' if c['match'] else '❌'} {c['metric']}: "
-                              f"p{c['page_a']}={c['val_a']:,.2f} vs "
-                              f"p{c['page_b']}={c['val_b']:,.2f}")
+        if rep["agree"]:
+            detail.append("  跨表一致性（**参考信号，不参与判定**）：")
+            for c in rep["agree"]:
+                # 有其它命中、且其中至少一个与之相同 → 一致
+                tag = "✅" if c["consistent"] else "⚠️"
+                extra = ("" if c["n_others"] == 0
+                         else f"，其它 {c['n_others']} 处命中中 {c['n_agree']} 处相同")
+                detail.append(f"    {tag} {c['metric']:<14} "
+                              f"p{c['page']}={c['value']:,.2f}{extra}")
         if rep["problems"]:
             detail.append("  问题:")
             for p in rep["problems"]:
@@ -164,7 +169,7 @@ def main() -> int:
 
     print(f"\n  各指标命中率（{len(rows)} 份）：")
     cnt: Counter = Counter(m["metric"] for m in metric_rows if m["value"] != "")
-    for name, _ in KEY_METRICS:
+    for name in CORE_METRICS:
         n = cnt[name]
         print(f"    {name:<16} {n:>3}/{len(rows)}  {'█' * int(n / max(len(rows), 1) * 28)}")
 

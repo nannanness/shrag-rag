@@ -36,15 +36,9 @@ from shrag_rag.parse import (MineruClient, from_mineru_content_list,  # noqa: E4
 from shrag_rag.parse.mineru import MAX_FILES_PER_BATCH                # noqa: E402
 from shrag_rag.parse.pdfsplit import DEFAULT_MAX_PAGES                # noqa: E402
 
-# PDF 与元数据现在**自带在本仓库内**（数据源已随仓库提交，本仓库自包含）。
-# 仍保留对旧爬虫项目 shrag 的兼容：本仓库数据缺失时才回退到那边，
-# 方便两个仓库并存时对照排查。
-_LOCAL_PDFS = ROOT / "data" / "pdfs"
-_LOCAL_META = ROOT / "data" / "meta" / "annual_reports.csv"
-_SHARG_ROOT = Path(r"D:\Project\shrag")
-
-SHARG_PDF_ROOT = _LOCAL_PDFS if _LOCAL_PDFS.exists() else _SHARG_ROOT / "data" / "pdfs"
-SHARG_META = _LOCAL_META if _LOCAL_META.exists() else _SHARG_ROOT / "data" / "meta" / "annual_reports.csv"
+SHARG_ROOT = Path(r"D:\Project\shrag")
+SHARG_META = SHARG_ROOT / "data" / "meta" / "annual_reports.csv"
+SHARG_PDF_ROOT = SHARG_ROOT / "data" / "pdfs"
 
 DATA = ROOT / "data"
 PARSED = DATA / "parsed"
