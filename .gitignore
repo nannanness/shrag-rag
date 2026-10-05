@@ -1,0 +1,20 @@
+# 数据产物不入库（体积大且可由代码重建）
+data/parsed/
+data/chunks/
+data/index/
+data/metrics/
+
+# 但保留流程记录（很小，是"做过什么"的证据）
+# data/meta/ 不要忽略：parse_manifest.csv / quality_report.csv / metrics_preview.csv
+
+logs/
+*.part
+data/_*/
+
+# 一次性探针脚本
+_probe_*.py
+
+__pycache__/
+*.py[cod]
+.venv/
+venv/
