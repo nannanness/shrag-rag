@@ -52,6 +52,9 @@ _ENUM_RE = re.compile(
     r")\s*"
 )
 
+# 公开别名：切片层需要用它判断"剥掉序号后还剩什么"，以区分标题与正文句子
+ENUM_RE = _ENUM_RE
+
 YEAR_RE = re.compile(r"((?:19|20)\d{2})\s*年")
 
 
