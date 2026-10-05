@@ -46,6 +46,63 @@ class MetricValue:
     page: int
     source: str             # summary（主要会计数据/财务指标） | statement（正式报表）
     note: str = ""
+    unit: str = ""          # 金额单位，如「元」「万元」「百万元」
+
+
+# 「单位：元币种：人民币」「（单位：百万元）」「金额单位均为人民币百万元」
+_UNIT_RE = re.compile(r"单位[均为]*[：:]\s*([^，,。；;\n]{0,12})")
+_UNIT_TOKENS = ("百万元", "千元", "万元", "亿元", "元")
+
+
+def normalize_unit(s: str) -> str:
+    """从「人民币百万元」这类串里取出规范单位。"""
+    t = (s or "").replace("人民币", "").replace("币种", "").strip(" ：:（）()")
+    for u in _UNIT_TOKENS:                 # 顺序重要：百万元 必须早于 万元/元
+        if u in t:
+            return u
+    return ""
+
+
+def unit_index(doc: ParsedDoc) -> list[tuple[int, str]]:
+    """全文档的「单位声明」位置列表 ``[(块下标, 单位)]``。
+
+    为什么需要它：年报的金额单位往往是**文档级声明**，只在某处写一次
+    （如「（单位：百万元）」出现在 p23），之后几十页的表都不再重复。
+    实测华夏银行的总资产在 p121，而单位声明在 p23 —— 只看表附近是找不到的。
+    """
+    out: list[tuple[int, str]] = []
+    for i, b in enumerate(doc.blocks):
+        m = _UNIT_RE.search(b.text or "")
+        if m:
+            u = normalize_unit(m.group(1))
+            if u:
+                out.append((i, u))
+    return out
+
+
+def unit_for(units: list[tuple[int, str]], idx: int,
+             fallback: str = "", window: int = 80) -> str:
+    """判断该位置适用的金额单位。
+
+    ## 为什么不能简单地"取之前最近一次声明"
+
+    实测浦发银行全篇 43 处声明，其中 38 处是「百万元」，
+    但 p104/p106/p127/p128 是「万元」、p139 是「亿元」——
+    那些是**局部表格自己的单位**。若一路"粘"下去，
+    p322 的总资产会被错配成 p139 的「亿元」，**差 100 倍**。
+
+    所以只在 ``window`` 个块内取最近的声明；超出窗口说明那条声明
+    不属于当前上下文，回退到**全文最常见**的单位。
+    """
+    from collections import Counter
+    for pos, val in reversed(units):
+        if pos <= idx:
+            if idx - pos <= window:
+                return val
+            break
+    if units:
+        return Counter(v for _, v in units).most_common(1)[0][0]
+    return fallback
 
 
 @dataclass
@@ -99,10 +156,12 @@ def parse_summary_table(grid: list[list[str]]) -> list[SummaryRow]:
     return rows
 
 
-def find_summary_blocks(doc: ParsedDoc) -> list[tuple[int, list[list[str]], str]]:
+def find_summary_blocks(doc: ParsedDoc) -> list[tuple[int, list[list[str]], str, str]]:
     """找出所有汇总表块，返回 ``[(页码, 网格, 类别)]``。"""
-    out: list[tuple[int, list[list[str]], str]] = []
-    for b in doc.blocks:
+    out: list[tuple[int, list[list[str]], str, str]] = []
+    units = unit_index(doc)
+    fallback = units[0][1] if units else ""
+    for i, b in enumerate(doc.blocks):
         if b.kind != KIND_TABLE:
             continue
         grid = parse_html_table(b.html)
@@ -110,7 +169,7 @@ def find_summary_blocks(doc: ParsedDoc) -> list[tuple[int, list[list[str]], str]
             continue
         flat = "|".join("|".join(r) for r in grid)
         kind = "主要会计数据" if "主要会计数据" in flat else "主要财务指标"
-        out.append((b.page, grid, kind))
+        out.append((b.page, grid, kind, unit_for(units, i, fallback)))
     return out
 
 
@@ -122,7 +181,7 @@ def extract_company(doc: ParsedDoc, prefer_summary: bool = True) -> list[MetricV
     """
     got: dict[tuple[str, int], MetricValue] = {}
 
-    for page, grid, kind in find_summary_blocks(doc):
+    for page, grid, kind, unit in find_summary_blocks(doc):
         for sr in parse_summary_table(grid):
             name = match_metric(sr.label)
             if not name:
@@ -136,7 +195,7 @@ def extract_company(doc: ParsedDoc, prefer_summary: bool = True) -> list[MetricV
                 got[key] = MetricValue(
                     code=doc.code, name=doc.name, metric=name, year=year,
                     value=val, label=sr.label, page=page,
-                    source="summary", note=kind)
+                    source="summary", note=kind, unit=unit)
 
     _fill_from_statements(doc, got, only_missing=prefer_summary)
     return list(got.values())
@@ -148,8 +207,10 @@ def _fill_from_statements(doc: ParsedDoc, got: dict, only_missing: bool = True) 
     **只用页码最小的那张报表**（标准顺序里「合并」在「母公司」之前），
     否则会把母公司口径混进来 —— 那是合法但不同的数字。
     """
-    best: dict[str, tuple[int, list[list[str]]]] = {}
-    for b in doc.blocks:
+    units = unit_index(doc)
+    fallback = units[0][1] if units else ""
+    best: dict[str, tuple[int, list[list[str]], str]] = {}
+    for i, b in enumerate(doc.blocks):
         if b.kind != KIND_TABLE:
             continue
         grid = parse_html_table(b.html)
@@ -162,11 +223,11 @@ def _fill_from_statements(doc: ParsedDoc, got: dict, only_missing: bool = True) 
             if not name:
                 continue
             if name not in best or b.page < best[name][0]:
-                best[name] = (b.page, grid)
+                best[name] = (b.page, grid, unit_for(units, i, fallback))
             break
 
     year = _guess_report_year(doc)
-    for name, (page, grid) in best.items():
+    for name, (page, grid, unit) in best.items():
         for row in grid:
             if not row or not (row[0] or "").strip():
                 continue
@@ -180,7 +241,7 @@ def _fill_from_statements(doc: ParsedDoc, got: dict, only_missing: bool = True) 
                 got[key] = MetricValue(
                     code=doc.code, name=doc.name, metric=name, year=year,
                     value=vals[0], label=row[0].strip(), page=page,
-                    source="statement")
+                    source="statement", unit=unit)
             break
 
 

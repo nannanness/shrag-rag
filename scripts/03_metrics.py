@@ -30,7 +30,7 @@ from shrag_rag.parse import ParsedDoc                          # noqa: E402
 PARSED = ROOT / "data" / "parsed"
 OUT = ROOT / "data" / "metrics"
 
-LONG_FIELDS = ["code", "name", "metric", "year", "value", "label", "page", "source", "note"]
+LONG_FIELDS = ["code", "name", "metric", "year", "value", "unit", "label", "page", "source", "note"]
 REPORT_FIELDS = ["code", "name", "report_year", "pages", "metrics", "years",
                  "from_summary", "from_statement", "missing"]
 
@@ -65,7 +65,7 @@ def main() -> int:
             long_rows.append({
                 "code": mv.code, "name": mv.name, "metric": mv.metric,
                 "year": mv.year, "value": f"{mv.value:.4f}".rstrip("0").rstrip("."),
-                "label": mv.label, "page": mv.page, "source": mv.source,
+                "unit": mv.unit, "label": mv.label, "page": mv.page, "source": mv.source,
                 "note": mv.note,
             })
 
