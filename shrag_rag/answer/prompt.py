@@ -69,6 +69,36 @@ def format_facts(facts: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def format_ranking(ranking: list[dict]) -> str:
+    """渲染跨公司排序结果。
+
+    「哪家净利润最高」这类问题**必须**走结构化通道：检索只能返回 5 条证据
+    （最多覆盖 5 家公司），而这里覆盖全部已索引的公司。
+    """
+    if not ranking:
+        return ""
+    metric = ranking[0]["metric"]
+    year = ranking[0]["year"]
+    n = ranking[0].get("n_total", len(ranking))
+    n_all = ranking[0].get("n_companies_total") or n
+    lines = [f"【跨公司排序】{n} 家公司按「{metric}」{year} 年从高到低"
+             f"（**已按单位统一换算后比较**）："]
+    for f in ranking:
+        unit = f.get("unit") or ""
+        lines.append(f"  {f['rank']:>2}. {f['name']}（{f['code']}） = "
+                     f"{f['value']:,.2f} {unit}   [出处：第 {f.get('page') or '?'} 页]")
+    if n < n_all:
+        lines.append(
+            f"  ⚠️ **覆盖范围**：本次排序只纳入 {n} 家 —— 这些公司的该指标"
+            f"取自年报「主要会计数据 / 主要财务指标」标准表，可核实。"
+            f"另有 {n_all - n} 家因该指标来自其他表（可靠性不足，实测存在抽错的情况）"
+            f"**未纳入**。回答时必须明确告知用户这一局限，"
+            f"不要说成'全部 {n_all} 家中最高'。")
+    lines.append("  请依据本排序作答，给出第一名及其数值与单位，"
+                 "不要自己换算单位。")
+    return "\n".join(lines)
+
+
 def build_messages(question: str, evidence: str, facts_text: str = "") -> list[dict]:
     user = f"""请依据下面的证据回答问题。
 

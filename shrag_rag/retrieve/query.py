@@ -41,6 +41,12 @@ _NUMERIC_HINTS = ("多少", "是多少", "几", "数值", "金额", "占比", "�
 # 事实型
 _FACT_HINTS = ("哪家", "是什么", "谁", "什么时候", "哪一年", "哪个")
 
+# 排序型：问"哪家/最高/前几"，需要**跨公司**比较
+_RANK_HINTS = ("最高", "最低", "最大", "最小", "最多", "最少", "排名", "前几",
+               "前三", "前五", "前十", "哪家", "哪些公司", "谁最高", "谁最低")
+
+_YEAR_RE = re.compile(r"((?:19|20)\d{2})\s*年")
+
 # 指标别名按长度降序，保证「归母净利润」先于「净利润」被匹配
 _ALIASES: list[tuple[str, str]] = sorted(
     ((a, name) for name, als in METRICS.items() for a in als),
@@ -54,6 +60,8 @@ class QueryIntent:
     company: str | None = None         # 识别出的公司简称
     metric: str | None = None          # 识别出的规范化指标名
     qtype: str = "unknown"             # numeric | fact | qualitative
+    year: int | None = None            # 问题里提到的年份
+    wants_ranking: bool = False        # 是否要**跨公司**排序（"哪家最高"）
     reasons: list[str] = field(default_factory=list)
 
     @property
@@ -67,6 +75,10 @@ class QueryIntent:
         if self.metric:
             bits.append(f"指标={self.metric}")
         bits.append(f"类型={self.qtype}")
+        if self.year:
+            bits.append(f"年份={self.year}")
+        if self.wants_ranking:
+            bits.append("→跨公司排序")
         return "  ".join(bits) + (f"   ({'; '.join(self.reasons)})" if self.reasons else "")
 
 
@@ -122,5 +134,13 @@ def analyze(question: str, companies: dict[str, str]) -> QueryIntent:
     code, name, r1 = detect_company(question, companies)
     metric, r2 = detect_metric(question)
     qtype, r3 = classify(question, metric)
+    m = _YEAR_RE.search(question)
+    year = int(m.group(1)) if m else None
+    # 跨公司排序：有指标但**没有指定公司**，且问题带排序信号
+    wants_ranking = bool(metric and not code
+                         and any(h in question for h in _RANK_HINTS))
+    if wants_ranking:
+        r3 += "；带排序信号且未指定公司 → 需跨公司比较"
     return QueryIntent(question=question, code=code, company=name,
-                       metric=metric, qtype=qtype, reasons=[r1, r2, r3])
+                       metric=metric, qtype=qtype, year=year,
+                       wants_ranking=wants_ranking, reasons=[r1, r2, r3])

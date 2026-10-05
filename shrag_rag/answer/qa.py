@@ -30,7 +30,7 @@ from ..retrieve import HybridRetriever, QueryIntent
 from ..retrieve.query import analyze
 from .llm import DashScopeLLM
 from .prompt import (build_messages, format_evidence, format_facts,
-                     render_citation)
+                     format_ranking, render_citation)
 
 log = logging.getLogger(__name__)
 
@@ -122,6 +122,50 @@ class RagQA:
         facts.sort(key=lambda f: -f["year"])
         return facts[:max_years]
 
+    # 单位 → 换算到「元」的乘数。
+    # **跨公司排序必须先归一化单位**：实测上汽集团总资产
+    # 960,207,461,450（元）与浦发银行 10,081,746（百万元 = 10.08 万亿）
+    # 直接比数值，会把浦发排到低位 —— 而它才是最大的。
+    _UNIT_MUL = {"元": 1.0, "千元": 1e3, "万元": 1e4, "百万元": 1e6, "亿元": 1e8}
+
+    def lookup_ranking(self, intent: QueryIntent, topn: int = 8,
+                       min_source: str = "summary") -> list[dict]:
+        """跨公司排序：把该指标下**所有公司**按值排序后取出前 N 名。
+
+        这是当初做结构化指标层的**头号理由** ——
+        「哪家净利润最高」跟任何一段文本都不相似，纯向量检索在原理上答不了。
+        检索只能返回 5 条证据（最多覆盖 5 家公司），而这里有全部 100 家。
+
+        两个必须做的处理：
+        1. **单位归一化**再比较（否则 元 与 百万元 混在一起比，结论会错）
+        2. 只取 ``source == summary``（可靠来源）。低置信值可能本身就是错的，
+           把它排进榜单会得出错误的第一名。因此会明确告知纳入了多少家。
+        """
+        if not (intent.metric and intent.wants_ranking):
+            return []
+        per_code: dict[str, dict] = {}
+        for (c, m, y), v in self.metrics.items():
+            if m != intent.metric:
+                continue
+            if intent.year and y != intent.year:
+                continue
+            if min_source and v.get("source") != min_source:
+                continue
+            cur = per_code.get(c)
+            if cur is None or v["year"] > cur["year"]:
+                per_code[c] = v
+        if not per_code:
+            return []
+        for v in per_code.values():
+            v["value_base"] = v["value"] * self._UNIT_MUL.get(v.get("unit") or "", 1.0)
+        ranked = sorted(per_code.values(), key=lambda x: -x["value_base"])
+        out = []
+        n_all = len(self.retriever.companies)
+        for i, v in enumerate(ranked[:topn], 1):
+            out.append({**v, "rank": i, "n_total": len(ranked),
+                        "n_companies_total": n_all})
+        return out
+
     # -- 主流程 ------------------------------------------------------------ #
 
     def ask(self, question: str, topk: int = 5, max_chars: int = 1200) -> Answer:
@@ -132,8 +176,11 @@ class RagQA:
                           intent=intent)
 
         facts = self.lookup_facts(intent)
+        ranking = self.lookup_ranking(intent)
         evidence, refs = format_evidence(hits, max_chars=max_chars)
-        msgs = build_messages(question, evidence, format_facts(facts))
+        facts_text = "\n\n".join(x for x in (format_facts(facts),
+                                             format_ranking(ranking)) if x)
+        msgs = build_messages(question, evidence, facts_text)
         raw = self.llm.chat(msgs)
 
         # 解析引用编号 → 只保留真实存在的
@@ -141,4 +188,5 @@ class RagQA:
         by_n = {r["n"]: r for r in refs}
         return Answer(question=question, text=raw.strip(),
                       citations=[by_n[n] for n in used],
-                      evidence=hits, intent=intent, facts=facts, raw=raw)
+                      evidence=hits, intent=intent,
+                      facts=facts + ranking, raw=raw)
