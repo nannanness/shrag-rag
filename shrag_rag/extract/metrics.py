@@ -63,6 +63,29 @@ def normalize_unit(s: str) -> str:
     return ""
 
 
+def declared_unit(text: str, max_len: int = 30) -> str:
+    """判断一个短文本块是不是**单位声明**，是则返回单位。
+
+    为什么要放宽：不少年报不写「单位：」，而是写成
+    ``（人民币百万元，特别注明除外）`` —— 实测招商银行就是这样，
+    只认「单位：」会漏掉它，导致 178,993 被标成「元」（差 100 万倍）。
+
+    误判防线：块必须**很短**，且带「单位/金额」字样、或整块被括号包住。
+    纯正文里出现的「人民币1亿元」这类句子不会被当成声明。
+    """
+    t = (text or "").strip()
+    if not t or len(t) > max_len:
+        return ""
+    signal = ("单位" in t) or ("金额" in t) or (
+        t.startswith(("(", "（")) and t.endswith((")", "）")))
+    if not signal:
+        return ""
+    for u in _UNIT_TOKENS:
+        if u in t:
+            return u
+    return ""
+
+
 def unit_index(doc: ParsedDoc) -> list[tuple[int, str]]:
     """全文档的「单位声明」位置列表 ``[(块下标, 单位)]``。
 
@@ -72,11 +95,13 @@ def unit_index(doc: ParsedDoc) -> list[tuple[int, str]]:
     """
     out: list[tuple[int, str]] = []
     for i, b in enumerate(doc.blocks):
-        m = _UNIT_RE.search(b.text or "")
-        if m:
-            u = normalize_unit(m.group(1))
-            if u:
-                out.append((i, u))
+        txt = b.text or ""
+        m = _UNIT_RE.search(txt)
+        u = normalize_unit(m.group(1)) if m else ""
+        if not u:
+            u = declared_unit(txt)
+        if u:
+            out.append((i, u))
     return out
 
 
@@ -204,43 +229,82 @@ def extract_company(doc: ParsedDoc, prefer_summary: bool = True) -> list[MetricV
 def _fill_from_statements(doc: ParsedDoc, got: dict, only_missing: bool = True) -> None:
     """用正式报表补汇总表缺失的指标。
 
-    **只用页码最小的那张报表**（标准顺序里「合并」在「母公司」之前），
-    否则会把母公司口径混进来 —— 那是合法但不同的数字。
+    ## 表的选择：页码最小的那张
+
+    标准顺序里「合并」在「母公司」之前，所以页码小的是合并口径。
+
+    ## 曾经的一个致命 bug：``break`` 位置错了
+
+    旧版在每个表的行循环里、**匹配到任意一个指标后就 break**：
+
+        for row in grid:
+            name = match_metric(row[0])
+            if not name: continue
+            if name not in best or b.page < best[name][0]:
+                best[name] = (b.page, grid, ...)
+            break          # ← 每张表只记录一个指标！
+
+    后果是**每张表只贡献一个指标**。实测：
+
+    - 招商银行 p14「2.1 本集团主要会计数据和财务指标」表里 利润总额 = 178,993（正确），
+      但该表第一行匹配到的是别的指标，一 break 就整张表都没记下 利润总额，
+      于是退到 p19「财务业绩摘要」的 (259)
+    - 中国石化 p5「主要财务数据及指标」表里 经营现金流 = 162,496（正确），
+      同样被跳过，最后用了 p102 现金流量表里被 MinerU 解析错位的 (3,280,213)
+
+    现在遍历整表的所有行，每个指标都记。
+
+    ## 另一处：选中的表取不到值时不能直接放弃
+
+    同一指标可能在多张表里出现。旧版只保留**页码最小**的那一张，
+    但那张表的对应行可能**没有数字**（合并单元格、跨页续表、解析错位），
+    于是这个指标就整个丢了 —— 实测让「经营活动现金流量净额」从
+    100/100 掉到 98/100。
+
+    改为按页码顺序保留**候选列表**，逐个尝试直到取到值。
     """
     units = unit_index(doc)
     fallback = units[0][1] if units else ""
-    best: dict[str, tuple[int, list[list[str]], str]] = {}
+    # 指标 -> 按页码升序的候选 [(页码, 网格, 单位), ...]
+    cands: dict[str, list[tuple[int, list[list[str]], str]]] = {}
     for i, b in enumerate(doc.blocks):
         if b.kind != KIND_TABLE:
             continue
         grid = parse_html_table(b.html)
         if not grid:
             continue
+        # 遍历**所有行**：一张报表里通常有多个我们要的指标
         for row in grid:
             if not row or not (row[0] or "").strip():
                 continue
             name = match_metric(row[0])
             if not name:
                 continue
-            if name not in best or b.page < best[name][0]:
-                best[name] = (b.page, grid, unit_for(units, i, fallback))
-            break
+            lst = cands.setdefault(name, [])
+            if all(p != b.page or g is not grid for p, g, _ in lst):
+                lst.append((b.page, grid, unit_for(units, i, fallback)))
+    for name in cands:
+        cands[name].sort(key=lambda x: x[0])
 
     year = _guess_report_year(doc)
-    for name, (page, grid, unit) in best.items():
-        for row in grid:
-            if not row or not (row[0] or "").strip():
-                continue
-            if match_metric(row[0]) != name:
-                continue
-            vals = [v for v in (parse_number(c) for c in row[1:]) if v is not None]
+    for name, options in cands.items():
+        for page, grid, unit in options:
+            vals: list[float] = []
+            for row in grid:
+                if not row or not (row[0] or "").strip():
+                    continue
+                if match_metric(row[0]) != name:
+                    continue
+                vals = [v for v in (parse_number(c) for c in row[1:])
+                        if v is not None]
+                break
             if not vals:
-                continue
+                continue                     # 这张表取不到，试下一张
             key = (name, year)
             if key not in got:
                 got[key] = MetricValue(
                     code=doc.code, name=doc.name, metric=name, year=year,
-                    value=vals[0], label=row[0].strip(), page=page,
+                    value=vals[0], label=name, page=page,
                     source="statement", unit=unit)
             break
 

@@ -35,7 +35,27 @@ from .prompt import (build_messages, format_evidence, format_facts,
 log = logging.getLogger(__name__)
 
 _CITE_RE = re.compile(r"\[(\d{1,2})\]")
+_NUM_RE = re.compile(r"-?\d[\d,]*(?:\.\d+)?")
 NO_INFO = "没有找到相关信息"
+
+
+def _body_has_number(body: str, value: float, rel: float = 1e-6) -> bool:
+    """正文里是否出现了这个数值（**按数值比，不是字符串比**）。
+
+    字符串比会误判：浦发以百万元为单位，年报写 ``173,964`` 而期望串是
+    ``173,964.00``，差一个 ``.00`` 就判错（评测层踩过这个坑）。
+    """
+    for m in _NUM_RE.finditer(body or ""):
+        try:
+            v = float(m.group().replace(",", ""))
+        except ValueError:
+            continue
+        if value == 0:
+            if abs(v) < 1e-9:
+                return True
+        elif abs(v - value) <= max(abs(value) * rel, 0.01):
+            return True
+    return False
 
 
 @dataclass
@@ -90,7 +110,7 @@ class RagQA:
     # -- 结构化通道 -------------------------------------------------------- #
 
     def lookup_facts(self, intent: QueryIntent, max_years: int = 3,
-                     min_source: str = "summary") -> list[dict]:
+                     min_source: str | None = None, corrob_hits: list | None = None) -> list[dict]:
         """问数字时，从指标表取出**高置信**的权威值。
 
         ## 为什么默认只取 ``source == "summary"``
@@ -120,7 +140,29 @@ class RagQA:
                  if c == intent.code and m == intent.metric
                  and (min_source is None or v.get("source") == min_source)]
         facts.sort(key=lambda f: -f["year"])
-        return facts[:max_years]
+        facts = facts[:max_years]
+
+        # ---- 安全闸：statement 来源的值必须与检索到的证据一致才注入 ----
+        #
+        # 抽取层的兜底路径修好后准确率大幅提升，但它仍然是从**非标准表**
+        # 读出来的，没有「主要会计数据」那种强制标准化保证。
+        # 所以对这类值再加一道校验：**它必须出现在我们正要给模型看的证据里**。
+        # 这样即使抽取又出错，也不会注入一个与证据矛盾的值 ——
+        # 模型会自行从证据中读取正确数字。
+        if corrob_hits is not None:
+            kept = []
+            for f in facts:
+                if f.get("source") == "summary":
+                    kept.append(f)
+                    continue
+                if any(_body_has_number(h.chunk.get("body") or "", f["value"])
+                       for h in corrob_hits):
+                    kept.append(f)
+                else:
+                    log.info("丢弃未获证据佐证的 %s %s：%s %s",
+                             f["code"], f["metric"], f["value"], f.get("unit"))
+            facts = kept
+        return facts
 
     # 单位 → 换算到「元」的乘数。
     # **跨公司排序必须先归一化单位**：实测上汽集团总资产
@@ -175,7 +217,7 @@ class RagQA:
                           text=f"（{NO_INFO}：检索没有返回任何候选）",
                           intent=intent)
 
-        facts = self.lookup_facts(intent)
+        facts = self.lookup_facts(intent, corrob_hits=hits)
         ranking = self.lookup_ranking(intent)
         evidence, refs = format_evidence(hits, max_chars=max_chars)
         facts_text = "\n\n".join(x for x in (format_facts(facts),
