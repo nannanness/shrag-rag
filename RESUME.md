@@ -13,14 +13,20 @@
 
 ```
 仓库   D:\Project\shrag-rag      分支 master   远程 origin/master
-状态   本地与远程同步（0/0）—— 5e22bfa 与 81aeac6 已确认推送成功
-验证   git rev-list --left-right --count origin/master...master  →  0  0
-       git reflog show origin/master  看到 `update by push` 即成功
+状态   领先远程 1 个提交（a6adb60 未推出去）
+已验证 5e22bfa 与 81aeac6 是推送成功的（reflog 里有 update by push）
+待推   a6adb60  fix: 修好嵌入路径的鉴权 bug + 补全项目文档
 ```
 
-**推送不可靠时的判据**：GitHub 偶尔连不上，`ls-remote` 也会失败。
-**`git reflog show origin/master` 里出现 `update by push` 才是推送成功的可靠信号**，
-不要只看命令有没有报错。
+**行动项**：网络可用时执行
+`git -C D:\Project\shrag-rag push origin master`。
+刚才失败是因为 `Recv failure: Connection was reset`（GitHub 连不上），
+**不是代码或认证问题**。
+
+**推送成功的判据**：GitHub 偶尔连不上，`push` 与 `ls-remote` 都可能失败，
+所以别只看命令有没有报错。可靠的信号是
+`git reflog show origin/master` 里出现 `update by push`，
+以及 `git rev-list --left-right --count origin/master...master` 返回 `0  0`。
 
 另一个仓库 `D:\Project\shrag`（爬虫）**已冻结**，HEAD `8124fd4`，不再改动。
 
