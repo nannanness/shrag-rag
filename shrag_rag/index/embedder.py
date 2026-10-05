@@ -92,19 +92,15 @@ class DashScopeEmbedder:
         self.total_tokens = 0
         self.total_calls = 0
         self._stat_lock = threading.Lock()
-        self._ds = None
-
-    @property
-    def ds(self):
-        if self._ds is None:
-            import dashscope
-            dashscope.api_key = self.api_key
-            self._ds = dashscope
-        return self._ds
 
     def _embed_batch(self, batch: list[str]) -> np.ndarray:
         """嵌入一个批次（≤10 条），内部重试。"""
+        import dashscope
         from dashscope import TextEmbedding
+        # 必须显式设到全局：TextEmbedding.call 不带 api_key 时只认环境变量。
+        # get_api_key() 会兜底去读 Windows User 级变量，于是「key 拿得到但没生效」
+        # —— 表现为 AuthenticationError，而不是「没找到 key」，很难一眼看出。
+        dashscope.api_key = self.api_key
         est = int(sum(len(t) for t in batch) * CHARS_PER_TOKEN) + 8
         last_err = ""
         for attempt in range(1, self.retries + 1):
