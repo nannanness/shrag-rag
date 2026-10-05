@@ -1,0 +1,10 @@
+{"id": "q001", "question": "白云机场2025年的营业收入是多少", "code": "600004", "metric": "营业收入", "expect": "7,955,002,081.35", "kind": "numeric", "note": "纯向量排第 80，指标过滤后第 2"}
+{"id": "q002", "question": "华能国际2025年的利润总额", "code": "600011", "metric": "利润总额", "expect": "利润总额", "kind": "numeric", "note": "纯向量 9 → 指标过滤 1"}
+{"id": "q003", "question": "浦发银行2025年归属于母公司股东的净利润", "code": "600000", "metric": "归母净利润", "expect": "50,017", "kind": "numeric", "note": "纯向量 2 → 指标过滤 1；浦发以百万元为单位"}
+{"id": "q004", "question": "首创环保2025年的营业收入", "code": "600008", "metric": "营业收入", "expect": "4,", "kind": "numeric", "note": "纯向量 4 → 指标过滤 1，但第1名是分季度数据而非年度合计"}
+{"id": "q005", "question": "包钢股份2025年的总资产", "code": "600010", "metric": "总资产", "expect": "总资产", "kind": "numeric", "note": "纯向量 5 → 指标过滤 2"}
+{"id": "q006", "question": "皖通高速2025年经营活动产生的现金流量净额", "code": "600012", "metric": "经营活动现金流量净额", "expect": "经营活动", "kind": "numeric", "note": "纯向量 22 → 指标过滤 1，第1名是母公司表而非合并表"}
+{"id": "q007", "question": "哪家公司的审计机构是立信会计师事务所", "code": null, "metric": null, "expect": "立信会计师事务所", "kind": "cross_company", "note": "纯向量即可命中，第1条正确"}
+{"id": "q008", "question": "皖通高速的主要业务是什么", "code": "600012", "metric": null, "expect": "收费公路", "kind": "qualitative", "note": "定性问题，纯向量第1条正确"}
+{"id": "q009", "question": "华能国际2025年年报的审计机构是哪家", "code": "600011", "metric": null, "expect": "立信", "kind": "fact", "note": "纯向量 15 → BM25 46；需混合检索或按 section 过滤"}
+{"id": "q010", "question": "2025年经营活动产生的现金流量净额", "code": null, "metric": "经营活动现金流量净额", "expect": "经营活动", "kind": "cross_company", "note": "全库检索可覆盖 7 家公司"}
