@@ -34,6 +34,7 @@ from __future__ import annotations
 import json
 import logging
 import pickle
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -86,26 +87,64 @@ class HybridRetriever:
         self.w_vec, self.w_bm25 = w_vec, w_bm25
         self.bm25_cache = bm25_cache or (self.index_dir / "bm25_tokens.pkl")
         self._bm25 = None
+        self._bm25_lock = threading.Lock()
+
+        # 预建路由表：公司 → 行号、指标 → 行号。
+        # 原来每次检索都遍历 6 万个 chunk 现算候选集，实测要 600 多毫秒；
+        # 建好一次之后取交集是毫秒级。
+        by_code: dict[str, list[int]] = {}
+        by_metric: dict[str, list[int]] = {}
+        for i, cid in enumerate(self.ids):
+            c = self.chunks[cid]
+            by_code.setdefault(c["code"], []).append(i)
+            for m in (c.get("metrics") or []):
+                by_metric.setdefault(m, []).append(i)
+        self._by_code = {k: v for k, v in by_code.items()}
+        self._by_metric = {k: v for k, v in by_metric.items()}
 
     # -- BM25（延迟构建 + 落盘缓存）--------------------------------------- #
 
     def _ensure_bm25(self):
         if self._bm25 is not None:
             return self._bm25
-        import jieba
-        from rank_bm25 import BM25Okapi
-        cache = self.bm25_cache
-        if cache.exists():
-            toks = pickle.loads(cache.read_bytes())
-            if len(toks) == len(self.ids):
-                log.info("BM25 分词读自缓存（%d 条）", len(toks))
-                self._bm25 = BM25Okapi(toks)
+        # 加锁：Web 服务会并发接请求，两个线程同时构建等于白算一遍
+        # （3.6 秒 + 760 MB 内存）
+        with self._bm25_lock:
+            if self._bm25 is not None:
                 return self._bm25
-        log.info("BM25 分词中（%d 条，首次较慢）…", len(self.ids))
-        toks = [list(jieba.cut(self.chunks[cid]["text"])) for cid in self.ids]
-        cache.write_bytes(pickle.dumps(toks))
-        self._bm25 = BM25Okapi(toks)
-        return self._bm25
+            import jieba
+            from rank_bm25 import BM25Okapi
+            cache = self.bm25_cache
+            if cache.exists():
+                toks = pickle.loads(cache.read_bytes())
+                if len(toks) == len(self.ids):
+                    log.info("BM25 分词读自缓存（%d 条）", len(toks))
+                    self._bm25 = BM25Okapi(toks)
+                    return self._bm25
+            log.info("BM25 分词中（%d 条，首次较慢）…", len(self.ids))
+            toks = [list(jieba.cut(self.chunks[cid]["text"])) for cid in self.ids]
+            cache.write_bytes(pickle.dumps(toks))
+            self._bm25 = BM25Okapi(toks)
+            return self._bm25
+
+    def warmup(self, background: bool = True):
+        """预先构建 BM25，避免第一个用户替我们等这 3.6 秒。
+
+        默认放后台线程：服务立刻可访问，BM25 几秒后自行就绪。
+        """
+        def run():
+            try:
+                self._ensure_bm25()
+                log.info("BM25 预热完成")
+            except Exception:                             # noqa: BLE001
+                log.exception("BM25 预热失败，将在首次查询时重试")
+
+        if not background:
+            run()
+            return None
+        t = threading.Thread(target=run, name="bm25-warmup", daemon=True)
+        t.start()
+        return t
 
     def _bm25_scores(self, question: str) -> np.ndarray:
         import jieba
@@ -122,15 +161,13 @@ class HybridRetriever:
         """
         if not intent.code and not intent.metric:
             return None
-        keep: list[int] = []
-        for i, cid in enumerate(self.ids):
-            c = self.chunks[cid]
-            if intent.code and c["code"] != intent.code:
-                continue
-            if intent.metric and intent.metric not in (c.get("metrics") or []):
-                continue
-            keep.append(i)
-        return keep
+        rows: set[int] | None = None
+        if intent.code:
+            rows = set(self._by_code.get(intent.code, ()))
+        if intent.metric:
+            mrows = set(self._by_metric.get(intent.metric, ()))
+            rows = mrows if rows is None else (rows & mrows)
+        return sorted(rows or ())
 
     # -- 检索主入口 -------------------------------------------------------- #
 
