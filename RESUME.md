@@ -49,6 +49,9 @@ $py = 'D:\DevelopmentEnvironment\python\python.exe'
 
 # 全量嵌入（已有缓存，通常不需要；--rebuild-only 只重建 FAISS）
 & $py D:\Project\shrag-rag\scripts\06_index.py --limit 0 --workers 8
+
+# Web（本机 8000 端口；不要加 --reload，每次重载都重读 234 MB 索引）
+& $py -X utf8 -m uvicorn web.app:app --host 127.0.0.1 --port 8000
 ```
 
 ## 数据在哪（体积 / 是否入库）
@@ -78,6 +81,9 @@ $py = 'D:\DevelopmentEnvironment\python\python.exe'
 | 嵌入模型 / 维度 | `text-embedding-v4` / 1024，batch **10（硬上限）** |
 | LLM | `qwen-plus`（`qwen-turbo-latest` 会 403） |
 | 融合公式 | `1.0×vec_norm + 0.3×bm25_norm + rerank_adj`（池内 min-max） |
+| Web 冷启动 | 1.3 秒（索引 1.1s + 指标 0.01s）；BM25 后台预热 3 秒 |
+| Web 常驻内存 | **1.33 GB**（chunks 0.54G + BM25 0.76G + faiss 0.23G） |
+| Web 单问 | 首帧 meta 1.5 秒，首字 2.2 秒，整题 5 秒左右 |
 
 ## 环境（沙箱相关，容易忘）
 
@@ -104,31 +110,42 @@ $py = 'D:\DevelopmentEnvironment\python\python.exe'
 8. 公司简称（「浦发」）与集合称谓（「四大行」）认不出
 9. **`扣非加权平均净资产收益率` 没进自动评测** —— 被 `08_eval.py:31` 的 `SKIP`
    排除（缺出题模板），这 95 家能否检索到**没有实测证据**
+10. **报表兜底抽取有单位标错（覆盖率 100% 不等于正确）** —— 1185 个单元格里
+    17 个量级明显不对：北方稀土营业收入 `29.11 元`、杭钢股份营业收入 `-17.81 元`、
+    保利发展净利润 `5,022,154,432.21 万元`（数值其实是元，放大一万倍）。
+    目前只在 Web 展示层标「?」，根因在 `declared_unit` 的判定，**下一步该修这里**
+11. **净利润是唯一没有标准表来源的指标**（98 条全 statement），排序靠兜底值，
+    已加单位一致性校验并让 prompt 声明，但不如标准表可靠
+12. Web 无鉴权，只适合本机
 
-## 最近一次改动（本轮）
+## 最近一次改动（Web 这一轮）
 
-`shrag_rag/index/embedder.py` —— 修了一个**很隐蔽的鉴权 bug**：
+提交 `0507ade`（检索提速）、`77e35ed`（流式 + 排序校验）、`3325012`（Web 界面）。
 
-- `TextEmbedding.call()` 没传 `api_key`，而负责设 `dashscope.api_key` 的
-  `ds` 属性**全仓库零引用**（死代码）。
-- `get_api_key()` 会兜底读 User 级变量，所以表现为
-  **「key 拿到了（116 字符）却报 `AuthenticationError: No api key provided`」**。
-- 只有嵌入路径坏，`llm.py` 的问答路径是对的（它显式设了全局 key），
-  所以症状是"问答好好的，一跑评测就鉴权失败"。
-- 已改为在 `_embed_batch` 里显式 `dashscope.api_key = self.api_key`，并删掉死代码。
-- **验证方式**：在 `os.environ` 里剔除 `DASHSCOPE_API_KEY` 后仍能嵌入，
-  且重跑 `08_eval.py` 得到同样的 879/1090 与 1090/1090。
+- **路由**：候选集原来每次遍历 6 万 chunk，带「公司+指标」要 600 多毫秒；
+  改成初始化时建「公司→行号」「指标→行号」两张表取交集。全量评测确认
+  结果不变（879/1090、top-5 100%）
+- **流式**：`DashScopeLLM.chat_stream()` + `RagQA.stream()` 吐
+  meta/delta/done。首字从 1813 ms 降到 347 ms（实测单次 LLM 调用）
+- **排序缺陷（重要）**：`净利润` 98 条全是 `statement` 来源，而
+  `lookup_ranking` 默认只收 `summary`，于是「哪家净利润最高」的榜单**本来是空的**。
+  现在标准表为空时退回兜底来源并标 `degraded`；同时加了单位一致性校验，
+  剔掉了保利发展那条被放大一万倍的净利润。修复后第一名是招商银行
+- **Web**：`python -m uvicorn web.app:app --port 8000`。
+  索引只加载一次（1.33 GB），不要开多 worker、不要 `--reload`
+- **数据问题**：做 Web 时查出 17 个单元格单位标错（详见已知缺口第 10 条），
+  目前只在展示层标「?」，**根因还没修**
 
 ## 下一步候选（按性价比）
 
 | 方向 | 收益 | 成本 |
 | --- | --- | --- |
+| 修 `declared_unit`，消掉那 17 个单位标错 | 数值可信度 | 中 |
 | 补 `扣非加权平均净资产收益率` 出题模板纳入评测 | 12 指标全部有实测 | 极低 |
 | 补 5 家扣非 ROE + 3 家稀释 EPS | 95%→100% 覆盖 | 低 |
 | 简称/集合称谓别名表 | 口语问法可答 | 低 |
 | 长表格改摘要而非截断 | 大表信息不丢 | 中 |
 | 追问式多轮问答 | 交互体验 | 中 |
-| 问答接 Web 界面 | 演示价值 | 中 |
 
 ## 踩坑清单
 
