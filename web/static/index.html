@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>年报问答 · shrag-rag</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <h1>上交所年报问答</h1>
+    <span id="health" class="health">加载中…</span>
+  </div>
+  <nav class="tabs">
+    <button class="tab active" data-panel="ask">问答</button>
+    <button class="tab" data-panel="browse">指标浏览</button>
+  </nav>
+</header>
+
+<main>
+  <!-- 问答 -->
+  <section id="panel-ask" class="panel active">
+    <div class="chips" id="demo-chips"></div>
+    <form id="ask-form" class="askbar">
+      <textarea id="question" rows="2" placeholder="问点什么，比如：白云机场2025年的营业收入是多少"></textarea>
+      <button type="submit" id="ask-btn">提问</button>
+    </form>
+
+    <div id="result" class="hidden">
+      <div id="intent" class="intent"></div>
+      <div id="facts" class="facts"></div>
+      <div class="answer-wrap">
+        <div class="answer-label">
+          回答 <span id="meta-right" class="muted"></span>
+        </div>
+        <div id="answer" class="answer"></div>
+        <div id="citations" class="citations"></div>
+      </div>
+      <div class="evidence-head">证据<span id="ev-count" class="muted"></span></div>
+      <div id="evidence" class="evidence"></div>
+    </div>
+    <div id="empty-hint" class="hint">先点上面的示例，或直接输入问题。</div>
+  </section>
+
+  <!-- 指标浏览 -->
+  <section id="panel-browse" class="panel">
+    <div class="browse-bar">
+      <label>年份
+        <select id="year"></select>
+      </label>
+      <input id="company-filter" type="search" placeholder="筛选公司名或代码">
+      <span id="browse-count" class="muted"></span>
+      <span class="muted">排序按折算成「元」后的数值比较</span>
+    </div>
+    <div class="table-wrap">
+      <table id="metrics-table">
+        <thead><tr id="metrics-head"></tr></thead>
+        <tbody id="metrics-body"></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

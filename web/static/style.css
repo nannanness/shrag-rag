@@ -1,0 +1,194 @@
+:root {
+  --bg: #f7f7f8;
+  --panel: #fff;
+  --line: #e3e3e6;
+  --text: #1f2328;
+  --muted: #6b7280;
+  --accent: #1d4ed8;
+  --accent-bg: #eef2ff;
+  --warn: #b45309;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.65 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+}
+
+.top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 24px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  flex-wrap: wrap;
+}
+
+.brand { display: flex; align-items: baseline; gap: 12px; }
+.brand h1 { font-size: 17px; margin: 0; font-weight: 600; }
+.health { font-size: 12px; color: var(--muted); }
+
+.tabs { display: flex; gap: 6px; }
+.tab {
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--text);
+  padding: 6px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+}
+.tab.active { background: var(--accent-bg); border-color: #c7d2fe; color: var(--accent); font-weight: 600; }
+
+main { max-width: 1080px; margin: 0 auto; padding: 20px 24px 80px; }
+.panel { display: none; }
+.panel.active { display: block; }
+
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.chip {
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--muted);
+  padding: 5px 12px;
+  border-radius: 999px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.chip:hover { border-color: #c7d2fe; color: var(--accent); }
+
+.askbar { display: flex; gap: 10px; align-items: stretch; }
+.askbar textarea {
+  flex: 1;
+  resize: vertical;
+  padding: 10px 12px;
+  font: inherit;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+.askbar textarea:focus { outline: 2px solid #c7d2fe; border-color: #c7d2fe; }
+.askbar button {
+  padding: 0 26px;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #fff;
+  border-radius: 8px;
+  font: inherit;
+  cursor: pointer;
+}
+.askbar button:disabled { opacity: .55; cursor: default; }
+
+.hidden { display: none !important; }
+.hint { color: var(--muted); font-size: 13px; margin-top: 16px; }
+.muted { color: var(--muted); font-size: 12px; font-weight: 400; }
+
+#result { margin-top: 20px; display: flex; flex-direction: column; gap: 14px; }
+
+.intent { font-size: 13px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 6px; }
+.intent .badge {
+  background: var(--accent-bg);
+  color: var(--accent);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+.facts {
+  border: 1px solid #fde68a;
+  background: #fffbeb;
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 13px;
+}
+.facts table { border-collapse: collapse; width: 100%; }
+.facts td { padding: 3px 10px 3px 0; vertical-align: top; }
+.facts td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.facts .src { color: var(--muted); font-size: 12px; }
+
+.answer-wrap {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px 18px;
+}
+.answer-label { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+.answer { white-space: pre-wrap; word-break: break-word; min-height: 24px; }
+.answer .cursor { color: var(--accent); animation: blink 1s steps(2) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+
+sup.cite {
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 0 1px;
+  user-select: none;
+}
+sup.cite:hover { text-decoration: underline; }
+
+.citations { margin-top: 10px; border-top: 1px dashed var(--line); padding-top: 8px; }
+.citations div { font-size: 12px; color: var(--muted); }
+
+.evidence-head { font-size: 13px; color: var(--muted); }
+.evidence { display: flex; flex-direction: column; gap: 8px; }
+.ev {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-left: 3px solid #d1d5db;
+  border-radius: 6px;
+  padding: 10px 14px;
+  font-size: 13px;
+}
+.ev.hit { border-left-color: var(--accent); background: var(--accent-bg); }
+.ev-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; margin-bottom: 4px; }
+.ev-n { font-weight: 600; color: var(--accent); }
+.ev-meta { color: var(--muted); font-size: 12px; }
+.ev-snippet { color: #374151; white-space: pre-wrap; word-break: break-word; max-height: 120px; overflow: hidden; }
+.ev-snippet.open { max-height: none; }
+.ev-more { font-size: 12px; color: var(--accent); cursor: pointer; }
+
+/* 指标浏览 */
+.browse-bar { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; margin-bottom: 12px; font-size: 13px; }
+.browse-bar select, .browse-bar input {
+  font: inherit;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+}
+.browse-bar input { min-width: 220px; }
+
+.table-wrap { overflow: auto; max-height: 70vh; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+#metrics-table { border-collapse: separate; border-spacing: 0; width: 100%; font-size: 13px; }
+#metrics-table th, #metrics-table td { padding: 7px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+#metrics-table thead th {
+  position: sticky;
+  top: 0;
+  background: #fafafa;
+  z-index: 2;
+  text-align: right;
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+}
+#metrics-table thead th:first-child, #metrics-table td:first-child { text-align: left; position: sticky; left: 0; background: var(--panel); z-index: 1; }
+#metrics-table thead th:first-child { background: #fafafa; z-index: 3; }
+#metrics-table thead th.sorted { color: var(--accent); }
+#metrics-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+#metrics-table td.miss { color: #c4c4c8; text-align: right; }
+#metrics-table tbody tr:hover td { background: #fafbff; }
+#metrics-table tbody tr:hover td:first-child { background: #fafbff; }
+.unit { color: var(--muted); font-size: 11px; margin-left: 2px; }
+.badge-src { font-size: 10px; border-radius: 3px; padding: 0 4px; margin-left: 4px; }
+.badge-summary { background: #dcfce7; color: #166534; }
+.badge-statement { background: #fef3c7; color: var(--warn); }
+.badge-warn { background: #fee2e2; color: #b91c1c; font-weight: 700; cursor: help; }
+#metrics-table td.suspect { background: #fff5f5; color: #b91c1c; }
+#metrics-table tbody tr:hover td.suspect { background: #ffecec; }

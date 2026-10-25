@@ -1,10 +1,16 @@
-# 阶段 1：解析（MinerU 在线 API）
+# 采集 / 解析
 requests>=2.31
 
-# 后续阶段会用（先列出，尚未启用）
-# pandas>=2.0
-# numpy>=1.24
-# faiss-cpu>=1.8
-# jieba>=0.42
-# rank-bm25>=0.2.2
-# dashscope>=1.20
+# 抽取与切片
+numpy>=1.24
+# faiss 的索引文件必须放在纯 ASCII 路径下，否则会静默写到乱码文件名
+
+# 索引与检索
+faiss-cpu>=1.8
+jieba>=0.42
+rank-bm25>=0.2.2
+dashscope>=1.20
+
+# Web 服务
+fastapi>=0.110
+uvicorn>=0.27
