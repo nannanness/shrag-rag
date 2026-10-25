@@ -12,6 +12,9 @@ logs/
 *.part
 data/_*/
 
+# 本地续跑指引与踩坑清单，只留本地不进仓库
+RESUME.md
+
 _probe_*.py
 
 __pycache__/
