@@ -38,6 +38,12 @@ _CITE_RE = re.compile(r"\[(\d{1,2})\]")
 _NUM_RE = re.compile(r"-?\d[\d,]*(?:\.\d+)?")
 NO_INFO = "没有找到相关信息"
 
+# 单位 → 换算到「元」的乘数。
+# 跨公司排序必须先归一化单位：实测上汽集团总资产
+# 960,207,461,450（元）与浦发银行 10,081,746（百万元 = 10.08 万亿）
+# 直接比数值，会把浦发排到低位 —— 而它才是最大的。
+UNIT_MUL = {"元": 1.0, "千元": 1e3, "万元": 1e4, "百万元": 1e6, "亿元": 1e8}
+
 
 def _body_has_number(body: str, value: float, rel: float = 1e-6) -> bool:
     """正文里是否出现了这个数值（**按数值比，不是字符串比**）。
@@ -75,6 +81,18 @@ class Answer:
             for c in self.citations:
                 out.append("  " + render_citation(c))
         return "\n".join(out)
+
+
+@dataclass
+class Prepared:
+    """检索加 prompt 组装的结果，供 ``ask`` 与 ``stream`` 共用。"""
+    question: str
+    hits: list
+    intent: QueryIntent | None
+    facts: list[dict]
+    ranking: list[dict]
+    refs: list[dict]
+    msgs: list[dict]
 
 
 class RagQA:
@@ -164,27 +182,51 @@ class RagQA:
             facts = kept
         return facts
 
-    # 单位 → 换算到「元」的乘数。
-    # **跨公司排序必须先归一化单位**：实测上汽集团总资产
-    # 960,207,461,450（元）与浦发银行 10,081,746（百万元 = 10.08 万亿）
-    # 直接比数值，会把浦发排到低位 —— 而它才是最大的。
-    _UNIT_MUL = {"元": 1.0, "千元": 1e3, "万元": 1e4, "百万元": 1e6, "亿元": 1e8}
+    # 单位换算表在模块级（``UNIT_MUL``），Web 端排序也要用同一份，不重复定义
+    _UNIT_MUL = UNIT_MUL
 
     def lookup_ranking(self, intent: QueryIntent, topn: int = 8,
                        min_source: str = "summary") -> list[dict]:
         """跨公司排序：把该指标下**所有公司**按值排序后取出前 N 名。
 
-        这是当初做结构化指标层的**头号理由** ——
+        这是当初做结构化指标层的头号理由：
         「哪家净利润最高」跟任何一段文本都不相似，纯向量检索在原理上答不了。
         检索只能返回 5 条证据（最多覆盖 5 家公司），而这里有全部 100 家。
 
-        两个必须做的处理：
-        1. **单位归一化**再比较（否则 元 与 百万元 混在一起比，结论会错）
-        2. 只取 ``source == summary``（可靠来源）。低置信值可能本身就是错的，
-           把它排进榜单会得出错误的第一名。因此会明确告知纳入了多少家。
+        ## 优先标准表，退而用报表兜底
+
+        默认只收 ``source == summary``。但**有些指标压根没有标准表来源** ——
+        净利润就是典型：模板在「归母净利润 = 净利润」时只披露归母那一行，
+        净利润只能从正式报表兜底算出来，于是 98 条全都是 ``statement``。
+        这种情况下若一律丢弃，榜单会直接空掉、招牌问题答不出来，
+        所以退一步用兜底值，同时把「来源可靠性偏低」标出来交给 prompt 声明。
         """
         if not (intent.metric and intent.wants_ranking):
             return []
+        rows = self._rank_rows(intent, min_source)
+        degraded = False
+        if not rows and min_source:
+            rows = self._rank_rows(intent, None)
+            degraded = bool(rows)
+        if not rows:
+            return []
+
+        year = intent.year or (rows[0]["year"] if rows else 0)
+        rows, excluded = self._drop_implausible(rows, year)
+        if not rows:
+            return []
+
+        n_all = len(self.retriever.companies)
+        out = []
+        for i, v in enumerate(rows[:topn], 1):
+            out.append({**v, "rank": i, "n_total": len(rows),
+                        "n_companies_total": n_all,
+                        "n_excluded": excluded,
+                        "degraded": degraded})
+        return out
+
+    def _rank_rows(self, intent: QueryIntent, min_source: str | None) -> list[dict]:
+        """取每家公司该指标的最新一期，按统一单位换算后从高到低排序。"""
         per_code: dict[str, dict] = {}
         for (c, m, y), v in self.metrics.items():
             if m != intent.metric:
@@ -196,39 +238,148 @@ class RagQA:
             cur = per_code.get(c)
             if cur is None or v["year"] > cur["year"]:
                 per_code[c] = v
-        if not per_code:
-            return []
         for v in per_code.values():
+            # 单位必须先折成同一个基准再比，否则「元」与「百万元」混着排会得出错误第一名
             v["value_base"] = v["value"] * self._UNIT_MUL.get(v.get("unit") or "", 1.0)
-        ranked = sorted(per_code.values(), key=lambda x: -x["value_base"])
-        out = []
-        n_all = len(self.retriever.companies)
-        for i, v in enumerate(ranked[:topn], 1):
-            out.append({**v, "rank": i, "n_total": len(ranked),
-                        "n_companies_total": n_all})
-        return out
+        return sorted(per_code.values(), key=lambda x: -x["value_base"])
+
+    # 流量类指标：这些值不可能远超同一年的营业收入。
+    # 存量类（总资产、净资产）没有这个上界，不能套用。
+    _FLOW_METRICS = {"营业收入", "利润总额", "净利润", "归母净利润",
+                     "扣非归母净利润", "经营活动现金流量净额"}
+    # 营业收入低于 100 万元时认为这个锚点本身就不可信，放弃校验
+    _MIN_REVENUE = 1e6
+
+    def _revenue_base(self, code: str, year: int) -> float | None:
+        """取某公司某年营业收入（折算成元），优先标准表来源。"""
+        best = None
+        for src in ("summary", None):
+            for (c, m, y), v in self.metrics.items():
+                if c != code or m != "营业收入" or y != year:
+                    continue
+                if src and v.get("source") != src:
+                    continue
+                mul = self._UNIT_MUL.get(v.get("unit") or "", 1.0)
+                cand = v["value"] * mul
+                if best is None or (src == "summary" and v.get("source") == "summary"):
+                    best = cand
+            if best is not None:
+                break
+        return best
+
+    def _drop_implausible(self, rows: list[dict], year: int) -> tuple[list[dict], int]:
+        """按「流量指标不该远超营业收入」剔除明显不可能的值。
+
+        实测踩到的例子：保利发展 2025 年净利润被抽成
+        ``5,022,154,432.21 万元``（数值其实是元，单位标错），换算后相当于 50 万亿，
+        直接窜到跨公司排序第一名。这种值一旦进入 prompt，模型会照单全收。
+
+        故意做得保守：只有营业收入这个锚点本身看着正常（≥100 万元）时才校验，
+        锚点不可信就不下判断 —— 否则会把「营收抽错、净利润正确」的公司也误杀。
+        """
+        if not rows:
+            return rows, 0
+        metric = next(iter({r["metric"] for r in rows}), None)
+        if metric not in self._FLOW_METRICS or metric == "营业收入":
+            return rows, 0
+
+        kept, dropped = [], 0
+        for r in rows:
+            rev = self._revenue_base(r["code"], year or r["year"])
+            if rev is None or abs(rev) < self._MIN_REVENUE:
+                kept.append(r)                     # 锚点不可信，不判
+            elif abs(r["value_base"]) > 3 * abs(rev):
+                dropped += 1
+            else:
+                kept.append(r)
+        return kept, dropped
 
     # -- 主流程 ------------------------------------------------------------ #
 
-    def ask(self, question: str, topk: int = 5, max_chars: int = 1200) -> Answer:
+    def prepare(self, question: str, topk: int = 5, max_chars: int = 1200):
+        """检索 + 组装 prompt，返回 ``(Prepared | None, QueryIntent)``。
+
+        抽出来是为了让 Web 端能先拿到证据、再流式接答案：
+        证据要立刻画到页面上，不必等模型生成完。
+        """
         hits, intent = self.retriever.retrieve(question, topk=topk)
         if not hits:
-            return Answer(question=question,
-                          text=f"（{NO_INFO}：检索没有返回任何候选）",
-                          intent=intent)
-
+            return None, intent
         facts = self.lookup_facts(intent, corrob_hits=hits)
         ranking = self.lookup_ranking(intent)
         evidence, refs = format_evidence(hits, max_chars=max_chars)
         facts_text = "\n\n".join(x for x in (format_facts(facts),
                                              format_ranking(ranking)) if x)
         msgs = build_messages(question, evidence, facts_text)
-        raw = self.llm.chat(msgs)
+        return Prepared(question=question, hits=hits, intent=intent,
+                        facts=facts, ranking=ranking, refs=refs, msgs=msgs), intent
 
-        # 解析引用编号 → 只保留真实存在的
-        used = sorted({int(n) for n in _CITE_RE.findall(raw) if 1 <= int(n) <= len(refs)})
-        by_n = {r["n"]: r for r in refs}
-        return Answer(question=question, text=raw.strip(),
+    def ask(self, question: str, topk: int = 5, max_chars: int = 1200) -> Answer:
+        p, intent = self.prepare(question, topk, max_chars)
+        if p is None:
+            return Answer(question=question,
+                          text=f"（{NO_INFO}：检索没有返回任何候选）",
+                          intent=intent)
+
+        raw = self.llm.chat(p.msgs)
+        return self._finish(p, raw)
+
+    def stream(self, question: str, topk: int = 5, max_chars: int = 1200):
+        """流式问答，逐条 yield ``(event, payload)``。
+
+        事件顺序：``meta``（意图/事实/证据，先画页面）→ ``delta``（答案增量）
+        → ``done``（引用与统计）。库这边只吐元组，怎么编码成 SSE 由调用方决定。
+        """
+        p, intent = self.prepare(question, topk, max_chars)
+        if p is None:
+            yield "meta", {"intent": intent.describe() if intent else "",
+                           "evidence": [], "facts": [], "ranking": []}
+            yield "done", {"text": f"（{NO_INFO}：检索没有返回任何候选）",
+                           "citations": [], "ok": False}
+            return
+
+        yield "meta", {
+            "intent": intent.describe() if intent else "",
+            "code": intent.code, "company": intent.company,
+            "metric": intent.metric, "qtype": intent.qtype,
+            "facts": p.facts, "ranking": p.ranking,
+            "evidence": [self._evidence_item(i, h)
+                         for i, h in enumerate(p.hits, 1)],
+        }
+
+        buf: list[str] = []
+        try:
+            for piece in self.llm.chat_stream(p.msgs):
+                buf.append(piece)
+                yield "delta", {"t": piece}
+        except Exception as e:                            # noqa: BLE001
+            log.exception("流式生成中断")
+            yield "done", {"text": "".join(buf).strip(), "citations": [],
+                           "ok": False, "error": f"{type(e).__name__}: {e}"}
+            return
+
+        ans = self._finish(p, "".join(buf))
+        yield "done", {"text": ans.text, "citations": ans.citations,
+                       "ok": True, "raw_len": len(ans.raw)}
+
+    @staticmethod
+    def _evidence_item(n: int, h) -> dict:
+        """给前端用的证据卡片：元数据 + 正文片段。"""
+        c = h.chunk
+        body = (c.get("body") or "").strip()
+        return {"n": n, "chunk_id": h.chunk_id, "code": c.get("code"),
+                "name": c.get("name"), "year": c.get("year"),
+                "kind": c.get("kind"), "page": c.get("page_start"),
+                "page_end": c.get("page_end"), "section": c.get("section"),
+                "score": round(h.final, 4),
+                "snippet": body[:400], "length": len(body)}
+
+    def _finish(self, p: "Prepared", raw: str) -> Answer:
+        """把模型输出解析成带引用的 Answer（引用由代码渲染，不经过模型）。"""
+        used = sorted({int(n) for n in _CITE_RE.findall(raw)
+                       if 1 <= int(n) <= len(p.refs)})
+        by_n = {r["n"]: r for r in p.refs}
+        return Answer(question=p.question, text=raw.strip(),
                       citations=[by_n[n] for n in used],
-                      evidence=hits, intent=intent,
-                      facts=facts + ranking, raw=raw)
+                      evidence=p.hits, intent=p.intent,
+                      facts=p.facts + p.ranking, raw=raw)
