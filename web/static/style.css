@@ -154,6 +154,27 @@ sup.cite:hover { text-decoration: underline; }
 .ev-snippet.open { max-height: none; }
 .ev-more { font-size: 12px; color: var(--accent); cursor: pointer; }
 
+/* 证据/答案里的 markdown 管道表 */
+.md-table {
+  border-collapse: collapse;
+  margin: 6px 0;
+  font-size: 12px;
+  max-width: 100%;
+  display: block;
+  overflow-x: auto;
+  white-space: normal;
+}
+.md-table th, .md-table td {
+  border: 1px solid var(--line);
+  padding: 4px 8px;
+  vertical-align: top;
+  text-align: left;
+  word-break: break-word;
+}
+.md-table th { background: #f6f7f9; font-weight: 600; white-space: nowrap; }
+.md-table tr:nth-child(even) td { background: #fcfcfd; }
+.ev.hit .md-table th { background: #e4e9ff; }
+
 /* 指标浏览 */
 .browse-bar { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; margin-bottom: 12px; font-size: 13px; }
 .browse-bar select, .browse-bar input {

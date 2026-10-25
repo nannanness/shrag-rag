@@ -364,7 +364,11 @@ class RagQA:
 
     @staticmethod
     def _evidence_item(n: int, h) -> dict:
-        """给前端用的证据卡片：元数据 + 正文片段。"""
+        """给前端用的证据卡片：元数据 + 正文片段。
+
+        ``kind == "table"`` 的正文是 markdown 管道表，所以除了截断的 ``snippet``，
+        再带一份较长的 ``full`` 供「展开」时渲染整张表（表格截断在半行很难看）。
+        """
         c = h.chunk
         body = (c.get("body") or "").strip()
         return {"n": n, "chunk_id": h.chunk_id, "code": c.get("code"),
@@ -372,7 +376,8 @@ class RagQA:
                 "kind": c.get("kind"), "page": c.get("page_start"),
                 "page_end": c.get("page_end"), "section": c.get("section"),
                 "score": round(h.final, 4),
-                "snippet": body[:400], "length": len(body)}
+                "snippet": body[:400], "full": body[:6000],
+                "length": len(body)}
 
     def _finish(self, p: "Prepared", raw: str) -> Answer:
         """把模型输出解析成带引用的 Answer（引用由代码渲染，不经过模型）。"""

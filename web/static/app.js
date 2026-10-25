@@ -157,36 +157,45 @@
     // 证据卡片
     const evs = m.evidence || [];
     $("ev-count").textContent = evs.length ? ` 共 ${evs.length} 条` : "";
-    $("evidence").innerHTML = evs.map((e) => `
+    evFull = {};
+    $("evidence").innerHTML = evs.map((e) => {
+      evFull[e.n] = e.full || e.snippet || "";
+      return `
       <div class="ev" id="ev-${e.n}" data-n="${e.n}">
         <div class="ev-head">
           <span class="ev-n">[${e.n}]</span>
           <span>${esc(e.name)}${esc(e.year)}年报</span>
           <span class="ev-meta">p.${e.page ?? "?"} · ${e.kind === "table" ? "表格" : "正文"} · §${esc(e.section || "无章节")} · 得分 ${e.score}</span>
         </div>
-        <div class="ev-snippet">${esc(e.snippet)}</div>
-        ${e.length > 400 ? '<span class="ev-more">展开</span>' : ""}
-      </div>`).join("");
+        <div class="ev-snippet">${renderRich(e.snippet)}</div>
+        ${(e.length > 400 || e.snippet !== evFull[e.n]) ? '<span class="ev-more">展开全文</span>' : ""}
+      </div>`;
+    }).join("");
 
     $("evidence").querySelectorAll(".ev-more").forEach((el) =>
       el.addEventListener("click", () => {
-        const s = el.parentElement.querySelector(".ev-snippet");
-        s.classList.toggle("open");
-        el.textContent = s.classList.contains("open") ? "收起" : "展开";
+        const card = el.parentElement;
+        const box = card.querySelector(".ev-snippet");
+        const expanded = box.dataset.expanded === "1";
+        if (expanded) {
+          box.innerHTML = renderRich(card.dataset.snippet || "");
+          box.dataset.expanded = "0";
+          box.classList.remove("open");
+          el.textContent = "展开全文";
+        } else {
+          card.dataset.snippet = card.dataset.snippet || box.innerHTML;
+          box.innerHTML = renderRich(evFull[card.dataset.n] || "");
+          box.dataset.expanded = "1";
+          box.classList.add("open");
+          el.textContent = "收起";
+        }
       }));
   }
 
   function finish(d, buf) {
     const text = (d.text || buf || "").trim();
-    $("answer").innerHTML = decorate(text);
-    $("answer").querySelectorAll("sup.cite").forEach((sup) =>
-      sup.addEventListener("click", () => {
-        const card = document.getElementById("ev-" + sup.dataset.n);
-        if (!card) return;
-        card.scrollIntoView({ behavior: "smooth", block: "center" });
-        card.classList.add("hit");
-        setTimeout(() => card.classList.remove("hit"), 1600);
-      }));
+    $("answer").innerHTML = renderRich(text, true);   // 答案里也可能有表格
+    bindCites($("answer"));
 
     const cites = d.citations || [];
     $("citations").innerHTML = cites.length
@@ -199,15 +208,86 @@
     $("meta-right").textContent = bits.join(" · ");
   }
 
-  function decorate(text) {
-    if (!text) return "";
-    // 先按引用角标切开，再把 **粗体** 转成 strong；其余内容一律转义
-    const parts = text.split(/(\[\d{1,2}\])/g);
-    return parts.map((p) => {
-      const m = p.match(/^\[(\d{1,2})\]$/);
-      if (m) return `<sup class="cite" data-n="${m[1]}">[${m[1]}]</sup>`;
-      return esc(p).replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
-    }).join("");
+  /* ---------- 轻量 markdown 渲染（只支持管道表、粗体、引用角标） ----------
+     证据里的表格正文本来就是 markdown 管道表（`| a | b |` + `|---|`），
+     之前整段当纯文本转义，页面上就是一堆竖线。这里把它渲染成真表格。 */
+
+  let evFull = {};   // 证据编号 → 完整正文，供「展开全文」用
+
+  const SEP_CELL = /^:?-{2,}:?$/;
+
+  function isSep(line) {
+    const t = line.trim();
+    if (!t.includes("-") || !t.includes("|")) return false;
+    const cells = splitRow(t);
+    return cells.length > 0 && cells.every((c) => SEP_CELL.test(c));
+  }
+
+  // 是不是表格的起始行：表头行 + 下一行是分隔行
+  function isTableStart(lines, i) {
+    if (!lines[i] || !lines[i].trim().startsWith("|")) return false;
+    return i + 1 < lines.length && isSep(lines[i + 1]);
+  }
+
+  function splitRow(line) {
+    let s = line.trim();
+    if (s.startsWith("|")) s = s.slice(1);
+    if (s.endsWith("|")) s = s.slice(0, -1);
+    return s.split("|").map((c) => c.trim());
+  }
+
+  // 行内：转义 → 粗体 → 引用角标
+  function inline(s, withCites) {
+    let h = esc(s).replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
+    if (withCites) {
+      h = h.replace(/\[(\d{1,2})\]/g,
+        (m, n) => `<sup class="cite" data-n="${n}">[${n}]</sup>`);
+    }
+    return h;
+  }
+
+  function renderTable(block, withCites) {
+    const head = splitRow(block[0]);
+    const body = block.slice(2).map(splitRow);
+    const ths = head.map((c) => `<th>${inline(c, withCites)}</th>`).join("");
+    const trs = body.map((r) => "<tr>" +
+      r.map((c) => `<td>${inline(c, withCites)}</td>`).join("") + "</tr>").join("");
+    return `<table class="md-table"><thead><tr>${ths}</tr></thead><tbody>${trs}</tbody></table>`;
+  }
+
+  function renderRich(text, withCites) {
+    const lines = String(text ?? "").split("\n");
+    const out = [];
+    let i = 0;
+    while (i < lines.length) {
+      if (isTableStart(lines, i)) {
+        const block = [];
+        while (i < lines.length && lines[i].trim().startsWith("|")) {
+          block.push(lines[i]);
+          i++;
+        }
+        out.push(renderTable(block, withCites));
+      } else {
+        const buf = [];
+        while (i < lines.length && !isTableStart(lines, i)) {
+          buf.push(lines[i]);
+          i++;
+        }
+        out.push(inline(buf.join("\n"), withCites));
+      }
+    }
+    return out.join("");
+  }
+
+  function bindCites(root) {
+    root.querySelectorAll("sup.cite").forEach((sup) =>
+      sup.addEventListener("click", () => {
+        const card = document.getElementById("ev-" + sup.dataset.n);
+        if (!card) return;
+        card.scrollIntoView({ behavior: "smooth", block: "center" });
+        card.classList.add("hit");
+        setTimeout(() => card.classList.remove("hit"), 1600);
+      }));
   }
 
   /* ---------- 指标浏览 ---------- */
